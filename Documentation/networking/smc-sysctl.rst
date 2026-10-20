@@ -42,6 +42,27 @@ smcr_testlink_time - INTEGER
 
 	Default: 30 seconds.
 
+smcr_tos - UNSIGNED INTEGER
+	Type of Service / Traffic Class byte applied when a new SMC-R RDMA
+	queue pair transitions to ready-to-receive. For RoCE v2, this sets
+	the outer IPv4 ToS or IPv6 Traffic Class field.
+
+	The value is host-wide and stored in the SMC module rather than in
+	struct netns_smc. It is writable in the initial network namespace;
+	other network namespaces expose it read-only and share the same value.
+	This avoids changing struct net's layout, but does not by itself
+	guarantee compatibility with another kernel build.
+
+	Existing queue pairs are not modified. A new connection may reuse an
+	existing SMC-R link, so changing the value does not necessarily affect
+	every subsequently opened connection.
+
+	The range is 0-255. DSCP occupies bits 2-7 and ECN occupies bits 0-1.
+	For DSCP 26 with ECN clear, use 104 (26 << 2). Device and network QoS
+	configuration must agree on how the marking is classified.
+
+	Default: 0 (preserve the existing marking)
+
 wmem - INTEGER
 	Initial size of send buffer used by SMC sockets.
 

@@ -33,6 +33,10 @@ static int conns_per_lgr_min = SMC_CONN_PER_LGR_MIN;
 static int conns_per_lgr_max = SMC_CONN_PER_LGR_MAX;
 static unsigned int smcr_max_wr_min = 2;
 static unsigned int smcr_max_wr_max = 2048;
+static unsigned int max_tos = 255;
+
+/* Host-wide storage avoids changing the layout of struct netns_smc. */
+unsigned int smc_sysctl_smcr_tos;
 
 #if IS_ENABLED(CONFIG_SMC_HS_CTRL_BPF)
 static int smc_net_replace_smc_hs_ctrl(struct net *net, const char *name)
@@ -113,6 +117,15 @@ static const struct ctl_table smc_table[] = {
 		.proc_handler	= proc_douintvec_minmax,
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_TWO,
+	},
+	{
+		.procname	= "smcr_tos",
+		.data		= &smc_sysctl_smcr_tos,
+		.maxlen		= sizeof(smc_sysctl_smcr_tos),
+		.mode		= 0644,
+		.proc_handler	= proc_douintvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= &max_tos,
 	},
 	{
 		.procname	= "smcr_testlink_time",
@@ -205,8 +218,14 @@ static const struct ctl_table *smc_table_dup(struct net *net)
 	if (!table)
 		return NULL;
 
-	for (i = 0; i < table_size; i++)
+	for (i = 0; i < table_size; i++) {
+		/* Non-init namespaces can read, but not change, the host value. */
+		if (table[i].data == &smc_sysctl_smcr_tos) {
+			table[i].mode = 0444;
+			continue;
+		}
 		table[i].data += (void *)net - (void *)&init_net;
+	}
 
 	return table;
 }
