@@ -29,6 +29,7 @@
 #include "smc_wr.h"
 #include "smc.h"
 #include "smc_netlink.h"
+#include "smc_sysctl.h"
 
 #define SMC_MAX_CQE 32766	/* max. # of completion queue elements */
 
@@ -66,6 +67,7 @@ static int smc_ib_modify_qp_rtr(struct smc_link *lnk)
 		IB_QP_RQ_PSN | IB_QP_MAX_DEST_RD_ATOMIC | IB_QP_MIN_RNR_TIMER;
 	struct ib_qp_attr qp_attr;
 	u8 hop_lim = 1;
+	u8 tos;
 
 	memset(&qp_attr, 0, sizeof(qp_attr));
 	qp_attr.qp_state = IB_QPS_RTR;
@@ -74,7 +76,8 @@ static int smc_ib_modify_qp_rtr(struct smc_link *lnk)
 	rdma_ah_set_port_num(&qp_attr.ah_attr, lnk->ibport);
 	if (lnk->lgr->smc_version == SMC_V2 && lnk->lgr->uses_gateway)
 		hop_lim = IPV6_DEFAULT_HOPLIMIT;
-	rdma_ah_set_grh(&qp_attr.ah_attr, NULL, 0, lnk->sgid_index, hop_lim, 0);
+	tos = (u8)smc_get_smcr_tos();
+	rdma_ah_set_grh(&qp_attr.ah_attr, NULL, 0, lnk->sgid_index, hop_lim, tos);
 	rdma_ah_set_dgid_raw(&qp_attr.ah_attr, lnk->peer_gid);
 	if (lnk->lgr->smc_version == SMC_V2 && lnk->lgr->uses_gateway)
 		memcpy(&qp_attr.ah_attr.roce.dmac, lnk->lgr->nexthop_mac,

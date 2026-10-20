@@ -18,6 +18,13 @@
 int __net_init smc_sysctl_net_init(struct net *net);
 void __net_exit smc_sysctl_net_exit(struct net *net);
 
+extern unsigned int smc_sysctl_smcr_tos;
+
+static inline unsigned int smc_get_smcr_tos(void)
+{
+	return READ_ONCE(smc_sysctl_smcr_tos);
+}
+
 #else
 
 static inline int smc_sysctl_net_init(struct net *net)
@@ -31,6 +38,11 @@ static inline int smc_sysctl_net_init(struct net *net)
 }
 
 static inline void smc_sysctl_net_exit(struct net *net) { }
+
+static inline unsigned int smc_get_smcr_tos(void)
+{
+	return 0;
+}
 
 #endif /* CONFIG_SYSCTL */
 
