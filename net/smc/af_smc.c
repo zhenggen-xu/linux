@@ -1117,6 +1117,22 @@ static int smc_connect_ism_vlan_setup(struct smc_init_info *ini)
 	return 0;
 }
 
+static void smc_smcrv2_set_saddr(struct smc_init_info_smcrv2 *smcrv2,
+				 const struct sock *clcsk)
+{
+	smcrv2->addr_family = clcsk->sk_family;
+#if IS_ENABLED(CONFIG_IPV6)
+	if (clcsk->sk_family == AF_INET6) {
+		if (!ipv6_addr_v4mapped(&clcsk->sk_v6_rcv_saddr)) {
+			smcrv2->saddr6 = clcsk->sk_v6_rcv_saddr;
+			return;
+		}
+		smcrv2->addr_family = AF_INET;
+	}
+#endif
+	smcrv2->saddr = clcsk->sk_rcv_saddr;
+}
+
 static int smc_find_proposal_devices(struct smc_sock *smc,
 				     struct smc_init_info *ini)
 {
@@ -1146,12 +1162,8 @@ static int smc_find_proposal_devices(struct smc_sock *smc,
 
 	/* check if there is an rdma v2 device available */
 	ini->check_smcrv2 = true;
-	ini->smcrv2.saddr = smc->clcsock->sk->sk_rcv_saddr;
+	smc_smcrv2_set_saddr(&ini->smcrv2, smc->clcsock->sk);
 	if (!(ini->smcr_version & SMC_V2) ||
-#if IS_ENABLED(CONFIG_IPV6)
-	    (smc->clcsock->sk->sk_family == AF_INET6 &&
-	     !ipv6_addr_v4mapped(&smc->clcsock->sk->sk_v6_rcv_saddr)) ||
-#endif
 	    !smc_clc_ueid_count() ||
 	    smc_find_rdma_device(smc, ini))
 		ini->smcr_version &= ~SMC_V2;
@@ -1215,7 +1227,13 @@ void smc_fill_gid_list(struct smc_link_group *lgr,
 
 	alt_ini->vlan_id = lgr->vlan_id;
 	alt_ini->check_smcrv2 = true;
-	alt_ini->smcrv2.saddr = lgr->saddr;
+	alt_ini->smcrv2.addr_family = lgr->addr_family;
+	if (lgr->addr_family == AF_INET)
+		alt_ini->smcrv2.saddr = lgr->saddr;
+#if IS_ENABLED(CONFIG_IPV6)
+	else if (lgr->addr_family == AF_INET6)
+		alt_ini->smcrv2.saddr6 = lgr->saddr6;
+#endif
 	smc_pnet_find_alt_roce(lgr, alt_ini, known_dev);
 
 	if (!alt_ini->smcrv2.ib_dev_v2)
@@ -1244,10 +1262,19 @@ static int smc_connect_rdma_v2_prepare(struct smc_sock *smc,
 		memcpy(ini->smcrv2.nexthop_mac, &aclc->r0.lcl.mac, ETH_ALEN);
 		ini->smcrv2.uses_gateway = false;
 	} else {
-		if (smc_ib_find_route(net, smc->clcsock->sk->sk_rcv_saddr,
-				      smc_ib_gid_to_ipv4(aclc->r0.lcl.gid),
-				      ini->smcrv2.nexthop_mac,
-				      &ini->smcrv2.uses_gateway))
+		if (ini->smcrv2.addr_family == AF_INET) {
+			ini->smcrv2.daddr = smc_ib_gid_to_ipv4(aclc->r0.lcl.gid);
+			if (ini->smcrv2.daddr == cpu_to_be32(INADDR_NONE))
+				return SMC_CLC_DECL_NOROUTE;
+		}
+#if IS_ENABLED(CONFIG_IPV6)
+		else if (ini->smcrv2.addr_family == AF_INET6 &&
+			 !smc_ib_gid_to_ipv6(aclc->r0.lcl.gid,
+					    &ini->smcrv2.daddr6)) {
+			return SMC_CLC_DECL_NOROUTE;
+		}
+#endif
+		if (smc_ib_find_route_af(net, &ini->smcrv2))
 			return SMC_CLC_DECL_NOROUTE;
 		if (!ini->smcrv2.uses_gateway) {
 			/* mismatch: peer claims indirect, but its direct */
@@ -2319,8 +2346,19 @@ static void smc_find_rdma_v2_device_serv(struct smc_sock *new_smc,
 	memcpy(ini->peer_mac, pclc->lcl.mac, ETH_ALEN);
 	ini->check_smcrv2 = true;
 	ini->smcrv2.clc_sk = new_smc->clcsock->sk;
-	ini->smcrv2.saddr = new_smc->clcsock->sk->sk_rcv_saddr;
-	ini->smcrv2.daddr = smc_ib_gid_to_ipv4(smc_v2_ext->roce);
+	smc_smcrv2_set_saddr(&ini->smcrv2, new_smc->clcsock->sk);
+	if (ini->smcrv2.addr_family == AF_INET) {
+		ini->smcrv2.daddr = smc_ib_gid_to_ipv4(smc_v2_ext->roce);
+		if (ini->smcrv2.daddr == cpu_to_be32(INADDR_NONE))
+			goto not_found;
+	}
+#if IS_ENABLED(CONFIG_IPV6)
+	else if (ini->smcrv2.addr_family == AF_INET6 &&
+		 !smc_ib_gid_to_ipv6(smc_v2_ext->roce,
+				    &ini->smcrv2.daddr6)) {
+		goto not_found;
+	}
+#endif
 	rc = smc_find_rdma_device(new_smc, ini);
 	if (rc) {
 		smc_init_info_store_rc(rc, ini);
